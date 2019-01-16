@@ -1,195 +1,148 @@
-/*
- * Copyright 2001-2018 The OpenSSL Project Authors. All Rights Reserved.
+/* crypto/rand/rand_vms.c -*- mode:C; c-file-style: "eay" -*- */
+/* Written by Richard Levitte <richard@levitte.org> for the OpenSSL
+ * project 2000.
+ */
+/* ====================================================================
+ * Copyright (c) 1998-2000 The OpenSSL Project.  All rights reserved.
  *
- * Licensed under the OpenSSL license (the "License").  You may not use
- * this file except in compliance with the License.  You can obtain a copy
- * in the file LICENSE in the source distribution or at
- * https://www.openssl.org/source/license.html
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions
+ * are met:
+ *
+ * 1. Redistributions of source code must retain the above copyright
+ *    notice, this list of conditions and the following disclaimer. 
+ *
+ * 2. Redistributions in binary form must reproduce the above copyright
+ *    notice, this list of conditions and the following disclaimer in
+ *    the documentation and/or other materials provided with the
+ *    distribution.
+ *
+ * 3. All advertising materials mentioning features or use of this
+ *    software must display the following acknowledgment:
+ *    "This product includes software developed by the OpenSSL Project
+ *    for use in the OpenSSL Toolkit. (http://www.openssl.org/)"
+ *
+ * 4. The names "OpenSSL Toolkit" and "OpenSSL Project" must not be used to
+ *    endorse or promote products derived from this software without
+ *    prior written permission. For written permission, please contact
+ *    openssl-core@openssl.org.
+ *
+ * 5. Products derived from this software may not be called "OpenSSL"
+ *    nor may "OpenSSL" appear in their names without prior written
+ *    permission of the OpenSSL Project.
+ *
+ * 6. Redistributions of any form whatsoever must retain the following
+ *    acknowledgment:
+ *    "This product includes software developed by the OpenSSL Project
+ *    for use in the OpenSSL Toolkit (http://www.openssl.org/)"
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE OpenSSL PROJECT ``AS IS'' AND ANY
+ * EXPRESSED OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+ * PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL THE OpenSSL PROJECT OR
+ * ITS CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL,
+ * SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT
+ * NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+ * LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION)
+ * HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT,
+ * STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
+ * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED
+ * OF THE POSSIBILITY OF SUCH DAMAGE.
+ * ====================================================================
+ *
+ * This product includes cryptographic software written by Eric Young
+ * (eay@cryptsoft.com).  This product includes software written by Tim
+ * Hudson (tjh@cryptsoft.com).
+ *
  */
 
-#include "e_os.h"
+#include <openssl/rand.h>
+#include "rand_lcl.h"
 
 #if defined(OPENSSL_SYS_VMS)
-# include <unistd.h>
-# include "internal/cryptlib.h"
-# include <openssl/rand.h>
-# include "internal/rand_int.h"
-# include "rand_lcl.h"
-# include <descrip.h>
-# include <jpidef.h>
-# include <ssdef.h>
-# include <starlet.h>
-# include <efndef>
-# ifdef __DECC
-#  pragma message disable DOLLARID
-# endif
 
-# ifndef OPENSSL_RAND_SEED_OS
-#  error "Unsupported seeding method configured; must be os"
-# endif
+#include <descrip.h>
+#include <jpidef.h>
+#include <ssdef.h>
+#include <starlet.h>
+#ifdef __DECC
+# pragma message disable DOLLARID
+#endif
 
-/*
- * Use 32-bit pointers almost everywhere.  Define the type to which to cast a
- * pointer passed to an external function.
+/* Use 32-bit pointers almost everywhere.  Define the type to which to
+ * cast a pointer passed to an external function.
  */
-# if __INITIAL_POINTER_SIZE == 64
-#  define PTR_T __void_ptr64
-#  pragma pointer_size save
-#  pragma pointer_size 32
-# else
-#  define PTR_T void *
-# endif
+#if __INITIAL_POINTER_SIZE == 64
+# define PTR_T __void_ptr64
+# pragma pointer_size save
+# pragma pointer_size 32
+#else /* __INITIAL_POINTER_SIZE == 64 */
+# define PTR_T void *
+#endif /* __INITIAL_POINTER_SIZE == 64 [else] */
 
-static struct items_data_st {
-    short length, code;         /* length is number of bytes */
-} items_data[] = {
-    {4, JPI$_BUFIO},
-    {4, JPI$_CPUTIM},
-    {4, JPI$_DIRIO},
-    {4, JPI$_IMAGECOUNT},
-    {8, JPI$_LAST_LOGIN_I},
-    {8, JPI$_LOGINTIM},
-    {4, JPI$_PAGEFLTS},
-    {4, JPI$_PID},
-    {4, JPI$_PPGCNT},
-    {4, JPI$_WSPEAK},
-    {4, JPI$_FINALEXC},
-    {0, 0}
-};
+static struct items_data_st
+	{
+	short length, code;	/* length is amount of bytes */
+	} items_data[] =
+		{ { 4, JPI$_BUFIO },
+		  { 4, JPI$_CPUTIM },
+		  { 4, JPI$_DIRIO },
+		  { 8, JPI$_LOGINTIM },
+		  { 4, JPI$_PAGEFLTS },
+		  { 4, JPI$_PID },
+		  { 4, JPI$_WSSIZE },
+		  { 0, 0 }
+		};
+		  
+int RAND_poll(void)
+	{
+	long pid, iosb[2];
+	int status = 0;
+	struct
+		{
+		short length, code;
+		long *buffer;
+		int *retlen;
+		} item[32], *pitem;
+	unsigned char data_buffer[256];
+	short total_length = 0;
+	struct items_data_st *pitems_data;
 
-/*
- * We assume there we get about 4 bits of entropy per byte from the items
- * above, with a bit of scrambling added rand_pool_acquire_entropy()
- */
-#define ENTROPY_BITS_PER_BYTE   4
+	pitems_data = items_data;
+	pitem = item;
 
-size_t rand_pool_acquire_entropy(RAND_POOL *pool)
-{
-    /* determine the number of items in the JPI array */
-    struct items_data_st item_entry;
-    size_t item_entry_count = OSSL_NELEM(items_data);
-    /* Create the 32-bit JPI itemlist array to hold item_data content */
-    struct {
-        uint16_t length, code;
-        uint32_t *buffer;
-        uint32_t *retlen;
-    } item[item_entry_count], *pitem;
-    struct items_data_st *pitems_data;
-    /* 8 bytes (two longs) per entry max */
-    uint32_t data_buffer[(item_entry_count * 2) + 4];
-    uint32_t iosb[2];
-    uint32_t sys_time[2];
-    uint32_t *ptr;
-    size_t i, j ;
-    size_t tmp_length   = 0;
-    size_t total_length = 0;
-    size_t bytes_needed = rand_pool_bytes_needed(pool, ENTROPY_BITS_PER_BYTE);
-    size_t bytes_remaining = rand_pool_bytes_remaining(pool);
+	/* Setup */
+	while (pitems_data->length
+		&& (total_length + pitems_data->length <= 256))
+		{
+		pitem->length = pitems_data->length;
+		pitem->code = pitems_data->code;
+		pitem->buffer = (long *)&data_buffer[total_length];
+		pitem->retlen = 0;
+		total_length += pitems_data->length;
+		pitems_data++;
+		pitem++;
+		}
+	pitem->length = pitem->code = 0;
 
-    /* Setup itemlist for GETJPI */
-    pitems_data = items_data;
-    for (pitem = item; pitems_data->length != 0; pitem++) {
-        pitem->length = pitems_data->length;
-        pitem->code   = pitems_data->code;
-        pitem->buffer = &data_buffer[total_length];
-        pitem->retlen = 0;
-        /* total_length is in longwords */
-        total_length += pitems_data->length / 4;
-        pitems_data++;
-    }
-    pitem->length = pitem->code = 0;
-
-    /* Fill data_buffer with various info bits from this process */
-    if (sys$getjpiw(EFN$C_ENF, NULL, NULL, item, &iosb, 0, 0) != SS$_NORMAL)
-        return 0;
-
-    /* Now twist that data to seed the SSL random number init */
-    for (i = 0; i < total_length; i++) {
-        sys$gettim((struct _generic_64 *)&sys_time[0]);
-        srand(sys_time[0] * data_buffer[0] * data_buffer[1] + i);
-
-        if (i == (total_length - 1)) { /* for JPI$_FINALEXC */
-            ptr = &data_buffer[i];
-            for (j = 0; j < 4; j++) {
-                data_buffer[i + j] = ptr[j];
-                /* OK to use rand() just to scramble the seed */
-                data_buffer[i + j] ^= (sys_time[0] ^ rand());
-                tmp_length++;
-            }
-        } else {
-            /* OK to use rand() just to scramble the seed */
-            data_buffer[i] ^= (sys_time[0] ^ rand());
-        }
-    }
-
-    total_length += (tmp_length - 1);
-
-    /* Change the total length to number of bytes */
-    total_length *= 4;
-
-    /*
-     * If we can't feed the requirements from the caller, we're in deep trouble.
-     */
-    if (!ossl_assert(total_length >= bytes_needed)) {
-        char neededstr[20];
-        char availablestr[20];
-
-        BIO_snprintf(neededstr, sizeof(neededstr), "%zu", bytes_needed);
-        BIO_snprintf(availablestr, sizeof(availablestr), "%zu", total_length);
-        RANDerr(RAND_F_RAND_POOL_ACQUIRE_ENTROPY,
-                RAND_R_RANDOM_POOL_UNDERFLOW);
-        ERR_add_error_data(4, "Needed: ", neededstr, ", Available: ",
-                           availablestr);
-        return 0;
-    }
-
-    /*
-     * Try not to overfeed the pool
-     */
-    if (total_length > bytes_remaining)
-        total_length = bytes_remaining;
-
-    rand_pool_add(pool, (PTR_T)data_buffer, total_length,
-                  total_length * ENTROPY_BITS_PER_BYTE);
-    return rand_pool_entropy_available(pool);
-}
-
-int rand_pool_add_nonce_data(RAND_POOL *pool)
-{
-    struct {
-        pid_t pid;
-        CRYPTO_THREAD_ID tid;
-        uint64_t time;
-    } data = { 0 };
-
-    /*
-     * Add process id, thread id, and a high resolution timestamp to
-     * ensure that the nonce is unique whith high probability for
-     * different process instances.
-     */
-    data.pid = getpid();
-    data.tid = CRYPTO_THREAD_get_current_id();
-    sys$gettim_prec((struct _generic_64 *)&data.time);
-
-    return rand_pool_add(pool, (unsigned char *)&data, sizeof(data), 0);
-}
-
-int rand_pool_add_additional_data(RAND_POOL *pool)
-{
-    struct {
-        CRYPTO_THREAD_ID tid;
-        uint64_t time;
-    } data = { 0 };
-
-    /*
-     * Add some noise from the thread id and a high resolution timer.
-     * The thread id adds a little randomness if the drbg is accessed
-     * concurrently (which is the case for the <master> drbg).
-     */
-    data.tid = CRYPTO_THREAD_get_current_id();
-    sys$gettim_prec((struct _generic_64 *)&data.time);
-
-    return rand_pool_add(pool, (unsigned char *)&data, sizeof(data), 0);
+	/*
+	 * Scan through all the processes in the system and add entropy with
+	 * results from the processes that were possible to look at.
+	 * However, view the information as only half trustable.
+	 */
+	pid = -1;			/* search context */
+	while ((status = sys$getjpiw(0, &pid,  0, item, iosb, 0, 0))
+		!= SS$_NOMOREPROC)
+		{
+		if (status == SS$_NORMAL)
+			{
+			RAND_add( (PTR_T)data_buffer, total_length,
+			 total_length/2);
+			}
+		}
+	sys$gettim(iosb);
+	RAND_add( (PTR_T)iosb, sizeof(iosb), sizeof(iosb)/2);
+	return 1;
 }
 
 #endif

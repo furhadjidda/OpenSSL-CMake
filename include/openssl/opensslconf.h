@@ -88,66 +88,6 @@ extern "C" {
 # endif
 #endif
 
-#ifndef OPENSSL_THREADS
-# define OPENSSL_THREADS
-#endif
-#ifndef OPENSSL_NO_ASM
-# define OPENSSL_NO_ASM
-#endif
-
-#define NON_EMPTY_TRANSLATION_UNIT static void *dummy = &dummy;
-
-#if defined(OPENSSL_NO_DEPRECATED)
-# define DECLARE_DEPRECATED(f)
-#elif __GNUC__ > 3 || (__GNUC__ == 3 && __GNUC_MINOR__ > 0)
-# define DECLARE_DEPRECATED(f)    f __attribute__ ((deprecated));
-#else
-# define DECLARE_DEPRECATED(f)   f;
-#endif
-
-#ifndef OPENSSL_FILE
-# ifdef OPENSSL_NO_FILENAMES
-#  define OPENSSL_FILE ""
-#  define OPENSSL_LINE 0
-# else
-#  define OPENSSL_FILE __FILE__
-#  define OPENSSL_LINE __LINE__
-# endif
-#endif
-
-#ifndef OPENSSL_MIN_API
-# define OPENSSL_MIN_API 0
-#endif
-
-#if !defined(OPENSSL_API_COMPAT) || OPENSSL_API_COMPAT < OPENSSL_MIN_API
-# undef OPENSSL_API_COMPAT
-# define OPENSSL_API_COMPAT OPENSSL_MIN_API
-#endif
-
-#if OPENSSL_API_COMPAT < 0x10200000L
-# define DEPRECATEDIN_1_2_0(f)   DECLARE_DEPRECATED(f)
-#else
-# define DEPRECATEDIN_1_2_0(f)
-#endif
-
-#if OPENSSL_API_COMPAT < 0x10100000L
-# define DEPRECATEDIN_1_1_0(f)   DECLARE_DEPRECATED(f)
-#else
-# define DEPRECATEDIN_1_1_0(f)
-#endif
-
-#if OPENSSL_API_COMPAT < 0x10000000L
-# define DEPRECATEDIN_1_0_0(f)   DECLARE_DEPRECATED(f)
-#else
-# define DEPRECATEDIN_1_0_0(f)
-#endif
-
-#if OPENSSL_API_COMPAT < 0x00908000L
-# define DEPRECATEDIN_0_9_8(f)   DECLARE_DEPRECATED(f)
-#else
-# define DEPRECATEDIN_0_9_8(f)
-#endif
-
 /* crypto/opensslconf.h.in */
 
 /* Generate 80386 code? */
@@ -166,6 +106,19 @@ extern "C" {
 #undef OPENSSL_EXPORT_VAR_AS_FUNCTION
 #define OPENSSL_EXPORT_VAR_AS_FUNCTION
 
+#if defined(HEADER_IDEA_H) && !defined(IDEA_INT)
+#define IDEA_INT unsigned int
+#endif
+
+#if defined(HEADER_MD2_H) && !defined(MD2_INT)
+#define MD2_INT unsigned int
+#endif
+
+#if defined(HEADER_RC2_H) && !defined(RC2_INT)
+/* I need to put in a mod for the alpha - eay */
+#define RC2_INT unsigned int
+#endif
+
 #if defined(HEADER_RC4_H)
 #if !defined(RC4_INT)
 /* using int types make the structure larger but make the code faster
@@ -183,6 +136,14 @@ extern "C" {
  * boundary. See crypto/rc4/rc4_enc.c for further details.
  */
 #define RC4_CHUNK unsigned long long
+#endif
+#endif
+
+#if (defined(HEADER_NEW_DES_H) || defined(HEADER_DES_H)) && !defined(DES_LONG)
+/* If this is set to 'unsigned int' on a DEC Alpha, this gives about a
+ * %20 speed up (longs are 8 bytes, int's are 4). */
+#ifndef DES_LONG
+#define DES_LONG unsigned int
 #endif
 #endif
 
@@ -249,7 +210,7 @@ YOU SHOULD NOT HAVE BOTH DES_RISC1 AND DES_RISC2 DEFINED!!!!!
    even newer MIPS CPU's, but at the moment one size fits all for
    optimization options.  Older Sparc's work better with only UNROLL, but
    there's no way to tell at compile time what it is you're running on */
-
+ 
 #if defined( sun )		/* Newer Sparc's */
 #  define DES_PTR
 #  define DES_RISC1
