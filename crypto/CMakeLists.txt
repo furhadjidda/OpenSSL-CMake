@@ -48,6 +48,8 @@ file(GLOB SRCS
 	rc2/*.c
 	rc4/*.c
 	rsa/*.c
+	ripemd/*.c
+
 	seed/*.c
 	sha/*.c
 	srp/*.c
@@ -80,7 +82,6 @@ target_compile_definitions(crypto PUBLIC
 	-DOPENSSL_NO_MD4
 	-DOPENSSL_NO_MDC2
 	-DOPENSSL_NO_WHIRLPOOL
-	-DOPENSSL_NO_RIPEMD
 	-DOPENSSL_NO_COMP
 	-DOPENSSL_NO_OCSP
 

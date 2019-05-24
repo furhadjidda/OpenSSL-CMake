@@ -830,7 +830,10 @@ void bn_sqr_comba4(BN_ULONG *r, const BN_ULONG *a)
 
 #ifdef OPENSSL_NO_ASM
 #ifdef OPENSSL_BN_ASM_MONT
+
+#ifndef _MSC_VER
 #include <alloca.h>
+#endif
 /*
  * This is essentially reference implementation, which may or may not
  * result in performance improvement. E.g. on IA-32 this routine was
@@ -856,7 +859,14 @@ int bn_mul_mont(BN_ULONG *rp, const BN_ULONG *ap, const BN_ULONG *bp, const BN_U
 #if 0	/* template for platform-specific implementation */
 	if (ap==bp)	return bn_sqr_mont(rp,ap,np,n0p,num);
 #endif
+
+#ifndef _MSC_VER
 	vp = tp = alloca((num+2)*sizeof(BN_ULONG));
+#else
+	char realbigbuffer[4096];
+
+	vp = tp = realbigbuffer;
+#endif
 
 	n0 = *n0p;
 
@@ -982,14 +992,24 @@ void bn_mul_comba8(BN_ULONG *r, BN_ULONG *a, BN_ULONG *b)
 
 #ifdef OPENSSL_NO_ASM
 #ifdef OPENSSL_BN_ASM_MONT
+#ifndef _MSC_VER
 #include <alloca.h>
+#endif
 int bn_mul_mont(BN_ULONG *rp, const BN_ULONG *ap, const BN_ULONG *bp, const BN_ULONG *np,const BN_ULONG *n0p, int num)
 	{
 	BN_ULONG c0,c1,*tp,n0=*n0p;
 	volatile BN_ULONG *vp;
 	int i=0,j;
 
+
+#ifndef _MSC_VER
 	vp = tp = alloca((num+2)*sizeof(BN_ULONG));
+#else
+	char realbigbuffer[4096];
+
+	vp = tp = realbigbuffer;
+#endif
+
 
 	for(i=0;i<=num;i++)	tp[i]=0;
 
